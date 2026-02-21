@@ -1,10 +1,11 @@
 import { resolveAdapter } from './adapters/registry.js';
-import { PositionTracker } from './board/position-tracker.js';
+import { PositionWatcher } from './board/position-watcher.js';
 import { CoachPanel } from './overlay/coach-panel.js';
 import { ArrowCanvas } from './overlay/arrow-canvas.js';
 import type { ContentToSW, SWToContent } from '../shared/messages/protocol.js';
 import { isSWToContent } from '../shared/messages/protocol.js';
 import { getSettings } from '../shared/storage/client.js';
+import { uciToMove } from '../shared/chess/types.js';
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,9 @@ async function bootstrap(): Promise<void> {
 
   const arrows = new ArrowCanvas();
 
-  const tracker = new PositionTracker(adapter, async (snapshot) => {
+  const watcher = new PositionWatcher(adapter, { throttleMs: 300 });
+
+  watcher.subscribe(async (snapshot) => {
     // Notify SW that a game is in progress (lazy — only on first position)
     await sendToSW({ type: 'GAME_STARTED', site: adapter.site });
     panel.showWaiting();
@@ -36,8 +39,7 @@ async function bootstrap(): Promise<void> {
     });
   });
 
-  tracker.start();
-  tracker.emitCurrent();
+  watcher.start(document);
 
   // ─── SW Reconnection: ping every 25s ──────────────────────────────────────
   const pingInterval = setInterval(async () => {
@@ -75,7 +77,9 @@ async function bootstrap(): Promise<void> {
 
             const moves = hint.pvLines
               .map(line => line.moves[0])
-              .filter((m): m is NonNullable<typeof m> => m != null);
+              .filter((m): m is string => m != null)
+              .map(uci => uciToMove(uci))
+              .filter((m): m is NonNullable<typeof m> => m !== null);
             arrows.drawMoves(moves, orientation);
           }
         }
@@ -105,7 +109,7 @@ async function bootstrap(): Promise<void> {
 
   window.addEventListener('beforeunload', () => {
     clearInterval(pingInterval);
-    tracker.stop();
+    watcher.stop();
     adapter.detach();
     arrows.detach();
     panel.unmount();
