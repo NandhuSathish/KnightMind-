@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "KnightMind",
+  "version": "0.1.0",
+  "description": "Offline chess coaching powered by Stockfish",
+
+  "permissions": [
+    "storage",
+    "offscreen"
+  ],
+
+  "host_permissions": [
+    "*://lichess.org/*",
+    "*://www.chess.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background/index.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "*://lichess.org/*",
+        "*://www.chess.com/*"
+      ],
+      "js": ["content/index.js"],
+      "run_at": "document_idle",
+      "world": "ISOLATED"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_icon": {
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "offscreen/index.html",
+        "engine/stockfish.js",
+        "engine/stockfish.wasm"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}

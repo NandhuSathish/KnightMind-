@@ -1,0 +1,7 @@
+node_modules/
+dist/
+engine/stockfish/stockfish.wasm
+engine/stockfish/stockfish.js
+*.js.map
+.DS_Store
+Thumbs.db
