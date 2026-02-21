@@ -1,5 +1,6 @@
 import type { BoardContext, ChessSite, Color } from '../chess/types.js';
 import type { RawPvLine, RawScore } from '../engine/types.js';
+import type { CoachingHints } from '../coaching/index.js';
 
 // ─── Content Script → Service Worker ─────────────────────────────────────────
 
@@ -58,6 +59,8 @@ export interface CoachingHint {
   /** Human-readable theme hint derived from the position */
   themeSuggestion: string | null;
   depth: number;
+  /** Structured coaching hints by category; null if FEN was unavailable */
+  coaching: CoachingHints | null;
 }
 
 // ─── Type guards ──────────────────────────────────────────────────────────────

@@ -59,6 +59,7 @@ const staticAssets: [string, string][] = [
   ['manifest.json',             'dist/manifest.json'],
   ['src/offscreen/index.html',  'dist/offscreen/index.html'],
   ['src/popup/index.html',      'dist/popup/index.html'],
+  ['icons/icon128.png',         'dist/icons/icon128.png'],
 ];
 
 // Engine binaries — copied from the stockfish npm package at build time

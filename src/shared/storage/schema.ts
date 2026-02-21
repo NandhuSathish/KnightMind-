@@ -1,4 +1,7 @@
 import type { ChessSite, ChessVariant } from '../chess/types.js';
+import type { DifficultyLevel } from '../coaching/types.js';
+
+export type { DifficultyLevel };
 
 export interface StorageSchema {
   readonly version: 1;
@@ -22,6 +25,8 @@ export interface UserSettings {
   showArrows: boolean;
   /** Render evaluation bar */
   showEvalBar: boolean;
+  /** Coaching hint difficulty level */
+  difficulty: DifficultyLevel;
 }
 
 export interface SiteConfig {
@@ -36,6 +41,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   multiPv: 2,
   showArrows: true,
   showEvalBar: false,
+  difficulty: 'intermediate',
 };
 
 export const DEFAULT_SITE_CONFIG: SiteConfig = {

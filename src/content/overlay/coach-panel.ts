@@ -86,19 +86,28 @@ export class CoachPanel {
   // ─── Private ───────────────────────────────────────────────────────────────
 
   private _render(hint: CoachingHint): void {
-    const evalText = formatScore(hint.evaluation);
+    const evalText   = formatScore(hint.evaluation);
     const isPositive = hint.evaluation.tag === 'cp' && hint.evaluation.value > 0;
     const isNegative = hint.evaluation.tag === 'cp' && hint.evaluation.value < 0;
-    const evalClass = isPositive ? 'positive' : isNegative ? 'negative' : 'neutral';
+    const evalClass  = isPositive ? 'positive' : isNegative ? 'negative' : 'neutral';
 
+    const c = hint.coaching;
+    const categoriesHtml = c
+      ? [
+          c.tactical   ? `<div class="km-category km-tactical"><span class="km-cat-label">Tactic</span>${escHtml(c.tactical)}</div>`       : '',
+          c.risk       ? `<div class="km-category km-risk"><span class="km-cat-label">Risk</span>${escHtml(c.risk)}</div>`                 : '',
+          c.strategic  ? `<div class="km-category km-strategic"><span class="km-cat-label">Strategy</span>${escHtml(c.strategic)}</div>`   : '',
+          c.positional ? `<div class="km-category km-positional"><span class="km-cat-label">Position</span>${escHtml(c.positional)}</div>` : '',
+        ].join('')
+      : '';
+
+    // .km-theme is kept so showWaiting() / showEngineUnavailable() still work
     this._panel.innerHTML = `
       <button class="km-close" aria-label="Close">✕</button>
-      <div class="km-header">
-        <span class="km-logo">♞</span>
-        KnightMind
-      </div>
+      <div class="km-header"><span class="km-logo">♞</span> KnightMind</div>
       <div class="km-eval ${evalClass}">${evalText}</div>
-      <div class="km-theme">${hint.themeSuggestion ?? ''}</div>
+      <div class="km-categories">${categoriesHtml}</div>
+      <div class="km-theme">${categoriesHtml ? '' : escHtml(hint.themeSuggestion ?? '')}</div>
       <div class="km-depth">depth ${hint.depth}</div>
     `;
 
@@ -118,4 +127,8 @@ export class CoachPanel {
       <div class="km-depth"></div>
     `;
   }
+}
+
+function escHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

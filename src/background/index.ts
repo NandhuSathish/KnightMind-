@@ -6,6 +6,8 @@ import type { SWToContent, ContentToSW, CoachingHint } from '../shared/messages/
 import { fenPositionKey } from '../shared/chess/fen.js';
 import { getSettings } from '../shared/storage/client.js';
 import type { RawPvLine } from '../shared/engine/types.js';
+import { hintGenerator } from '../shared/coaching/index.js';
+import type { DifficultyLevel } from '../shared/coaching/index.js';
 
 const registry = new TabRegistry();
 
@@ -55,7 +57,8 @@ async function handleMessage(
       case 'ANALYSIS_RESULT': {
         const { fen, lines } = offscreenMsg;
         // Broadcast to all tabs that sent this FEN
-        const hint = buildCoachingHint(lines);
+        const settings = await getSettings();
+        const hint = buildCoachingHint(lines, fen, settings.difficulty);
         const msg: SWToContent = { type: 'COACHING_HINT', hint };
         await broadcastToTabs(fen, msg);
         break;
@@ -144,18 +147,22 @@ async function broadcastToTabs(fen: string, msg: SWToContent): Promise<void> {
   );
 }
 
-function buildCoachingHint(lines: readonly RawPvLine[]): CoachingHint {
+function buildCoachingHint(
+  lines: readonly RawPvLine[],
+  fen: string,
+  difficulty: DifficultyLevel
+): CoachingHint {
   const best = lines[0];
-  // moves are raw UCI strings e.g. "e2e4" — no conversion needed
   const bestMove = best?.moves[0] ?? '';
   const score    = best?.score ?? { tag: 'cp' as const, value: 0 };
 
   return {
     bestMove,
-    evaluation:    score,
-    pvLines:       lines,
+    evaluation:      score,
+    pvLines:         lines,
     themeSuggestion: deriveTheme(lines),
-    depth:         best?.depth ?? 0,
+    depth:           best?.depth ?? 0,
+    coaching:        hintGenerator.generate(lines, fen, difficulty),
   };
 }
 

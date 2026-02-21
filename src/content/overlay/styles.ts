@@ -90,4 +90,33 @@ export const PANEL_STYLES = `
   }
 
   .km-close:hover { color: #e0e0e0; }
+
+  .km-categories {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 6px;
+  }
+
+  .km-category {
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 3px 6px;
+    border-radius: 4px;
+    color: #c0c0d8;
+  }
+
+  .km-cat-label {
+    font-weight: 700;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 5px;
+    opacity: 0.7;
+  }
+
+  .km-tactical   { background: rgba(255,100,100,0.12); border-left: 2px solid #ff6464; }
+  .km-risk       { background: rgba(255,180, 60,0.12); border-left: 2px solid #ffb43c; }
+  .km-strategic  { background: rgba(100,180,255,0.12); border-left: 2px solid #64b4ff; }
+  .km-positional { background: rgba(100,220,130,0.12); border-left: 2px solid #64dc82; }
 `;
