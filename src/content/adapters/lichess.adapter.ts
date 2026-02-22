@@ -238,8 +238,9 @@ export class LichessAdapter implements IBoardAdapter {
   }
 
   private _inferActiveColor(doc: Document): Color {
-    // Count moves in move list — even = white to move, odd = black to move
-    const moves = doc.querySelectorAll('.tview2 move, .moves move');
+    // Cover all page types: analysis/study (.tview2), old move list (.moves),
+    // live game move list (.rmoves, l4x)
+    const moves = doc.querySelectorAll('.tview2 move, .moves move, .rmoves move, l4x move');
     return moves.length % 2 === 0 ? 'white' : 'black';
   }
 

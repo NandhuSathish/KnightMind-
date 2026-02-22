@@ -19,7 +19,7 @@ async function bootstrap(): Promise<void> {
   adapter.attach(document);
 
   const panel = new CoachPanel();
-  panel.mount(settings.hintDelayMs);
+  panel.mount(settings);
 
   const arrows = new ArrowCanvas();
 
@@ -43,6 +43,7 @@ async function bootstrap(): Promise<void> {
 
   // ─── SW Reconnection: ping every 25s ──────────────────────────────────────
   const pingInterval = setInterval(async () => {
+    if (!isContextValid()) { clearInterval(pingInterval); return; }
     const alive = await pingServiceWorker();
     if (!alive) {
       // SW restarted — re-announce current position
@@ -68,8 +69,8 @@ async function bootstrap(): Promise<void> {
         const hint = msg.hint;
         panel.showHint(hint);
 
-        if (settings.showArrows && hint.pvLines.length > 0) {
-          const boardEl = document.querySelector('cg-board, chess-board');
+        if (panel.showArrows && hint.pvLines.length > 0) {
+          const boardEl = document.querySelector('cg-board, wc-chess-board');
           if (boardEl) {
             const currentSnapshot = adapter.getCurrentPosition();
             const orientation = currentSnapshot?.orientation ?? 'white';
@@ -87,11 +88,11 @@ async function bootstrap(): Promise<void> {
       }
 
       case 'ENGINE_READY':
-        // Engine is up — nothing to do, next position change will trigger analysis
+        panel.setEngineStatus('ready');
         break;
 
       case 'ENGINE_UNAVAILABLE':
-        panel.showEngineUnavailable();
+        panel.showEngineUnavailable(); // internally calls setEngineStatus('crashed')
         break;
 
       case 'PONG':
@@ -119,7 +120,13 @@ async function bootstrap(): Promise<void> {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Returns false once the extension has been reloaded and this context is stale. */
+function isContextValid(): boolean {
+  try { return !!chrome.runtime?.id; } catch { return false; }
+}
+
 async function sendToSW(msg: ContentToSW): Promise<void> {
+  if (!isContextValid()) return;
   try {
     await chrome.runtime.sendMessage(msg);
   } catch {
@@ -128,12 +135,19 @@ async function sendToSW(msg: ContentToSW): Promise<void> {
 }
 
 async function pingServiceWorker(): Promise<boolean> {
+  if (!isContextValid()) return false;
   return new Promise(resolve => {
     const timeout = setTimeout(() => resolve(false), 3000);
-    chrome.runtime.sendMessage({ type: 'PING' } satisfies ContentToSW, response => {
+    try {
+      chrome.runtime.sendMessage({ type: 'PING' } satisfies ContentToSW, response => {
+        clearTimeout(timeout);
+        void chrome.runtime.lastError; // consume to prevent "unchecked lastError" error
+        resolve(response?.type === 'PONG');
+      });
+    } catch {
       clearTimeout(timeout);
-      resolve(response?.type === 'PONG');
-    });
+      resolve(false);
+    }
   });
 }
 

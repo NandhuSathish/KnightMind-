@@ -163,6 +163,6 @@ export class PositionWatcher {
   }
 
   private _findBoardEl(doc: Document): Element | null {
-    return doc.querySelector('cg-board') ?? doc.querySelector('chess-board');
+    return doc.querySelector('cg-board') ?? doc.querySelector('wc-chess-board');
   }
 }

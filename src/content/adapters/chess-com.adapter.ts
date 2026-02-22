@@ -1,5 +1,5 @@
 import type { BoardContext, ChessVariant, Color, Piece, PieceType, PositionSnapshot, Square } from '../../shared/chess/types.js';
-import { piecePlacementFromMap, validateFEN } from '../../shared/chess/fen.js';
+import { piecePlacementFromMap, validateFEN, fenActiveColor } from '../../shared/chess/fen.js';
 import { AdapterError, type IBoardAdapter } from './adapter.interface.js';
 
 // ─── chess-board internal game API (module-private) ──────────────────────────
@@ -11,18 +11,55 @@ interface ChessComGame {
   getTurn?: () => 'white' | 'black' | string;
 }
 
+/**
+ * Reads the game object from chess-board.
+ *
+ * Tries three access paths in order:
+ *  1. Direct `el.game` property (Web Component internal state)
+ *  2. React 17+ fiber props under `__reactProps$*` key
+ *  3. Legacy React fiber under `__reactFiber$*` → memoizedProps
+ */
 function getChessComGame(doc: Document): ChessComGame | null {
-  const el = doc.querySelector('chess-board');
+  const el = doc.querySelector('wc-chess-board');
   if (!el) return null;
-  // 'game' is a React internal property — not a DOM attribute
-  const game = (el as unknown as Record<string, unknown>)['game'];
-  if (typeof game !== 'object' || game === null) return null;
-  return game as ChessComGame;
+
+  const elRecord = el as unknown as Record<string, unknown>;
+
+  // Path 1: direct DOM property
+  const direct = elRecord['game'];
+  if (isGameLike(direct)) return direct as ChessComGame;
+
+  // Path 2: React 17+ __reactProps$xxxx
+  const propsKey = Object.keys(elRecord).find(k => k.startsWith('__reactProps$'));
+  if (propsKey) {
+    const props = elRecord[propsKey];
+    if (typeof props === 'object' && props !== null) {
+      const game = (props as Record<string, unknown>)['game'];
+      if (isGameLike(game)) return game as ChessComGame;
+    }
+  }
+
+  // Path 3: React 16 __reactFiber$xxxx → memoizedProps
+  const fiberKey = Object.keys(elRecord).find(k => k.startsWith('__reactFiber$'));
+  if (fiberKey) {
+    const fiber = elRecord[fiberKey] as Record<string, unknown> | null | undefined;
+    const memoized = fiber?.['memoizedProps'];
+    if (typeof memoized === 'object' && memoized !== null) {
+      const game = (memoized as Record<string, unknown>)['game'];
+      if (isGameLike(game)) return game as ChessComGame;
+    }
+  }
+
+  return null;
+}
+
+function isGameLike(val: unknown): boolean {
+  return typeof val === 'object' && val !== null;
 }
 
 // ─── Piece type map ───────────────────────────────────────────────────────────
 
-// chess.com uses uppercase letters: K Q R B N P
+// chess.com uses uppercase letters for CHAR_TO_TYPE lookup
 const CHAR_TO_TYPE: Record<string, PieceType> = {
   K: 'k', Q: 'q', R: 'r', B: 'b', N: 'n', P: 'p',
 };
@@ -33,13 +70,20 @@ const CHAR_TO_TYPE: Record<string, PieceType> = {
  * Adapter for www.chess.com
  *
  * Chess.com renders a <chess-board> custom element via React.
- * Pieces carry semantic data attributes:
- *   - data-piece:  e.g. "wK", "bN"  (color + type)
- *   - data-square: e.g. "51"        (col 1–8, row 1–8)
+ * Pieces are rendered as divs with CSS classes:
+ *   - Color+type: "wp" (white pawn), "bk" (black king), etc.
+ *   - Square:     "square-XY" where X=file(1–8=a–h), Y=rank(1–8)
+ *
+ * Some older/API game modes additionally set data attributes:
+ *   - data-piece:  e.g. "wK", "bN"
+ *   - data-square: e.g. "51"
  *
  * Extraction layers:
- *   1. (chess-board).game.fen  (full 6-field FEN via React internal)
- *   2. [data-piece][data-square] DOM reconstruction + turn inference
+ *   1. (chess-board).game.fen  (full 6-field FEN via React / Web Component prop)
+ *   2. CSS-class DOM reconstruction (primary), data-attribute (fallback)
+ *
+ * Shadow DOM is handled: if chess-board exposes an open shadowRoot,
+ * queries and MutationObserver target the shadow root instead.
  */
 export class ChessComAdapter implements IBoardAdapter {
   readonly site = 'chess-com' as const;
@@ -65,10 +109,10 @@ export class ChessComAdapter implements IBoardAdapter {
         attributeFilter: ['class', 'data-piece', 'data-square'],
       });
     } else {
-      // Board not yet rendered — wait for it
+      // Board not yet rendered — watch until wc-chess-board appears (subtree: true for SPA)
       this._observer.observe(document.body, {
         childList: true,
-        subtree: false,
+        subtree: true,
       });
     }
   }
@@ -132,7 +176,7 @@ export class ChessComAdapter implements IBoardAdapter {
   // ─── Layer 2: DOM reconstruction ────────────────────────────────────────────
 
   private _tryLayer2(doc: Document, variant: ChessVariant): PositionSnapshot | null {
-    const board = doc.querySelector('chess-board');
+    const board = doc.querySelector('wc-chess-board');
     if (!board) return null;
 
     const pieceMap = this._buildPieceMap(board);
@@ -157,37 +201,119 @@ export class ChessComAdapter implements IBoardAdapter {
 
   // ─── DOM helpers ────────────────────────────────────────────────────────────
 
-  private _findPiecesLayer(doc: Document): Element | null {
+  /**
+   * Returns the best subtree to observe for piece mutations.
+   * Checks for open Shadow DOM, then falls back to light-DOM .pieces container.
+   */
+  private _findPiecesLayer(doc: Document): Element | ShadowRoot | null {
+    const board = doc.querySelector('wc-chess-board');
+    if (!board) return null;
+
+    // Prefer shadow root (open) so we observe the actual render surface
+    const shadow = (board as HTMLElement).shadowRoot;
+    if (shadow) return shadow;
+
     return (
-      doc.querySelector('chess-board .pieces') ??
-      doc.querySelector('chess-board [class*="pieces"]') ??
-      doc.querySelector('chess-board') ??
-      null
+      board.querySelector('.pieces') ??
+      board.querySelector('[class*="pieces"]') ??
+      board
     );
   }
 
+  /**
+   * Builds the piece map from the chess-board element.
+   *
+   * Tries (in order):
+   *  A. Shadow DOM + CSS classes
+   *  B. Shadow DOM + data attributes
+   *  C. Light DOM + CSS classes   (primary for current chess.com)
+   *  D. Light DOM + data attributes
+   */
   private _buildPieceMap(board: Element): Map<Square, Piece> | null {
-    const els = board.querySelectorAll<HTMLElement>('[data-piece][data-square]');
-    if (els.length === 0) return null;
+    const shadow = (board as HTMLElement).shadowRoot;
+    const roots: (Element | ShadowRoot)[] = shadow ? [shadow, board] : [board];
 
+    for (const root of roots) {
+      // CSS-class notation: <div class="piece wn square-71">
+      const byClass = root.querySelectorAll<HTMLElement>('.piece[class*="square-"]');
+      if (byClass.length > 0) {
+        const map = this._parseByClass(byClass);
+        if (map) return map;
+      }
+
+      // Data-attribute notation: <div data-piece="wN" data-square="71">
+      const byAttr = root.querySelectorAll<HTMLElement>('[data-piece][data-square]');
+      if (byAttr.length > 0) {
+        const map = this._parseByDataAttr(byAttr);
+        if (map) return map;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Parses pieces encoded as CSS classes.
+   * Class format: "piece [wb][kqrbnp] square-XY [...]"
+   *   - X = file 1–8 (a–h), Y = rank 1–8
+   */
+  private _parseByClass(els: NodeListOf<HTMLElement>): Map<Square, Piece> | null {
+    const map = new Map<Square, Piece>();
+
+    for (const el of els) {
+      // Find the color+type token: exactly 2 chars, w/b + piece letter
+      let colorChar: string | undefined;
+      let typeChar:  string | undefined;
+      let col = 0, row = 0;
+
+      for (const cls of el.classList) {
+        if (cls.length === 2 && /^[wb][kqrbnpKQRBNP]$/.test(cls)) {
+          colorChar = cls[0];
+          typeChar  = cls[1];
+        }
+        if (/^square-[1-8][1-8]$/.test(cls)) {
+          col = parseInt(cls[7] ?? '0', 10); // "square-XY"[7] = X
+          row = parseInt(cls[8] ?? '0', 10); // "square-XY"[8] = Y
+        }
+      }
+
+      if (!colorChar || !typeChar) continue;
+      if (col < 1 || col > 8 || row < 1 || row > 8) continue;
+
+      const color: Color = colorChar === 'w' ? 'white' : 'black';
+      const type = CHAR_TO_TYPE[typeChar.toUpperCase()];
+      if (!type) continue;
+
+      const fileChar = 'abcdefgh'[col - 1];
+      if (!fileChar) continue;
+
+      map.set(`${fileChar}${row}` as Square, { type, color });
+    }
+
+    return map.size > 0 ? map : null;
+  }
+
+  /**
+   * Parses pieces encoded as data attributes.
+   * data-piece="wK"  →  white king
+   * data-square="51" →  col 5 = e-file, row 1
+   */
+  private _parseByDataAttr(els: NodeListOf<HTMLElement>): Map<Square, Piece> | null {
     const map = new Map<Square, Piece>();
 
     for (const el of els) {
       const pieceAttr = el.dataset['piece'];   // e.g. "wK"
-      const sqAttr    = el.dataset['square'];  // e.g. "51" = e1
+      const sqAttr    = el.dataset['square'];  // e.g. "51"
       if (!pieceAttr || !sqAttr) continue;
 
-      const colorChar = pieceAttr[0];  // 'w' or 'b'
-      const typeChar  = pieceAttr[1];  // e.g. 'K'
+      const colorChar = pieceAttr[0];
+      const typeChar  = pieceAttr[1];
       if (!colorChar || !typeChar) continue;
 
       const color: Color = colorChar === 'w' ? 'white' : 'black';
-
-      // CHAR_TO_TYPE has string index — noUncheckedIndexedAccess returns PieceType | undefined
       const type = CHAR_TO_TYPE[typeChar.toUpperCase()];
       if (!type) continue;
 
-      // data-square: col(1–8) + row(1–8), e.g. "51" = col 5 = e-file, row 1
       const col = parseInt(sqAttr[0] ?? '0', 10);
       const row = parseInt(sqAttr[1] ?? '0', 10);
       if (col < 1 || col > 8 || row < 1 || row > 8) continue;
@@ -202,17 +328,40 @@ export class ChessComAdapter implements IBoardAdapter {
   }
 
   private _readOrientation(doc: Document): Color {
-    const board = doc.querySelector('chess-board');
+    const board = doc.querySelector('wc-chess-board');
     if (!board) return 'white';
+    // Flipped attribute or class signals black-at-bottom
     return board.classList.contains('flipped') || board.hasAttribute('flipped')
       ? 'black'
       : 'white';
   }
 
   private _inferActiveColor(doc: Document): Color {
-    const turn = getChessComGame(doc)?.getTurn?.();
+    // 1. JS API — most reliable
+    const game = getChessComGame(doc);
+    const turn = game?.getTurn?.();
     if (turn === 'white' || turn === 'black') return turn;
-    return 'white'; // conservative default
+
+    // 2. Parse active color from game.fen (present but getTurn() absent)
+    const rawFen = game?.fen;
+    if (rawFen) {
+      const c = fenActiveColor(rawFen);
+      if (c) return c;
+    }
+
+    // 3. Count half-moves via data-ply in chess.com move-list web components
+    for (const sel of ['wc-simple-move-list', 'vertical-move-list']) {
+      const listEl = doc.querySelector(sel);
+      if (!listEl) continue;
+      const plies = listEl.querySelectorAll('[data-ply]');
+      if (plies.length > 0) {
+        const last = plies[plies.length - 1];
+        const ply = parseInt(last?.getAttribute('data-ply') ?? '', 10);
+        if (!isNaN(ply)) return ply % 2 === 0 ? 'white' : 'black';
+      }
+    }
+
+    return 'white';
   }
 
   private _inferCastling(map: ReadonlyMap<Square, Piece>): string {
@@ -240,7 +389,7 @@ export class ChessComAdapter implements IBoardAdapter {
     if (path.startsWith('/game/live') || path.startsWith('/live')) return 'live';
     if (path.startsWith('/analysis')) return 'analysis';
     if (path.startsWith('/study')) return 'study';
-    // DOM fallback for live context
+    if (path.startsWith('/play')) return 'live';
     if (
       doc.querySelector('[class*="clock"]') &&
       doc.querySelector('[class*="game-controls"]')
