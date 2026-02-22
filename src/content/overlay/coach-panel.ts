@@ -37,6 +37,7 @@ export class CoachPanel {
   private readonly _arrowsBtn:  HTMLButtonElement;
   private readonly _diffBtn:    HTMLButtonElement;
   private readonly _depth:      HTMLDivElement;
+  private readonly _fab:        HTMLButtonElement;
 
   // ─── State ─────────────────────────────────────────────────────────────────
   private _hintDelayMs = 0;
@@ -162,8 +163,17 @@ export class CoachPanel {
     body.append(evalbarWrap, this._evalText, this._categories, this._theme, controls, this._depth);
     this._panel.append(this._header, body);
 
+    // ── Re-open FAB (visible only when panel is closed) ───────────────────────
+    this._fab = document.createElement('button');
+    this._fab.className = 'km-fab hidden';
+    this._fab.setAttribute('aria-label', 'Open KnightMind coaching panel');
+    this._fab.title = 'Open KnightMind';
+    this._fab.textContent = '♞';
+    this._shadow.appendChild(this._fab);
+
     // ── Event listeners ───────────────────────────────────────────────────────
     closeBtn.addEventListener('click', () => this.hide());
+    this._fab.addEventListener('click', () => this._showPanel());
     this._minimizeBtn.addEventListener('click', () => this._toggleMinimize());
     this._arrowsBtn.addEventListener('click',  () => this._toggleArrows());
     this._diffBtn.addEventListener('click',    () => this._cycleDifficulty());
@@ -225,14 +235,14 @@ export class CoachPanel {
   showWaiting(): void {
     this._theme.textContent = 'Analyzing…';
     this._theme.className = 'km-theme km-hint-delay';
-    this._panel.classList.remove('hidden');
+    this._showPanel();
   }
 
   showEngineUnavailable(): void {
     this._theme.textContent = 'Engine unavailable';
     this._theme.className = 'km-theme';
     this.setEngineStatus('crashed');
-    this._panel.classList.remove('hidden');
+    this._showPanel();
   }
 
   /** Updates the pulsing status dot in the header. */
@@ -248,6 +258,12 @@ export class CoachPanel {
 
   hide(): void {
     this._panel.classList.add('hidden');
+    this._fab.classList.remove('hidden');
+  }
+
+  private _showPanel(): void {
+    this._panel.classList.remove('hidden');
+    this._fab.classList.add('hidden');
   }
 
   /** Whether the arrows feature is currently enabled (may be toggled by user). */
@@ -285,7 +301,7 @@ export class CoachPanel {
     }
 
     this._depth.textContent = hint.depth > 0 ? `depth ${hint.depth}` : '';
-    this._panel.classList.remove('hidden');
+    this._showPanel();
   }
 
   /** Maps a RawScore to an eval-bar fill percentage (0–100). */

@@ -255,6 +255,43 @@ export const PANEL_STYLES = `
     text-align: right;
   }
 
+  /* ─── Re-open FAB ─────────────────────────────────────────────────────── */
+
+  .km-fab {
+    position: fixed;
+    z-index: 2147483647;
+    bottom: 80px;
+    right: 16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #1a1a2e;
+    border: 1px solid rgba(160, 196, 255, 0.35);
+    color: #a0c4ff;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+    transition: opacity 0.2s ease, transform 0.15s ease, border-color 0.15s ease;
+  }
+
+  .km-fab:hover {
+    transform: scale(1.12);
+    border-color: rgba(160, 196, 255, 0.7);
+  }
+
+  .km-fab:focus-visible {
+    outline: 2px solid #a0c4ff;
+    outline-offset: 2px;
+  }
+
+  .km-fab.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
   /* ─── Light theme ─────────────────────────────────────────────────────── */
 
   @media (prefers-color-scheme: light) {
