@@ -6,6 +6,7 @@ import type { ContentToSW, SWToContent } from '../shared/messages/protocol.js';
 import { isSWToContent } from '../shared/messages/protocol.js';
 import { getSettings } from '../shared/storage/client.js';
 import { uciToMove } from '../shared/chess/types.js';
+import type { Move, Color } from '../shared/chess/types.js';
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,20 @@ async function bootstrap(): Promise<void> {
   panel.mount(settings);
 
   const arrows = new ArrowCanvas();
+
+  // ─── Tactic hover → arrow ─────────────────────────────────────────────────
+  let lastPvMoves: Move[] = [];
+  let lastOrientation: Color = 'white';
+
+  panel.setTacticHoverCallback((uci) => {
+    if (!panel.showArrows) return;
+    if (uci === null) {
+      arrows.restoreMoves();
+    } else {
+      const move = uciToMove(uci);
+      if (move) arrows.highlightMove(move, lastOrientation);
+    }
+  });
 
   const watcher = new PositionWatcher(adapter, { throttleMs: 300 });
 
@@ -73,15 +88,16 @@ async function bootstrap(): Promise<void> {
           const boardEl = document.querySelector('cg-board, wc-chess-board');
           if (boardEl) {
             const currentSnapshot = adapter.getCurrentPosition();
-            const orientation = currentSnapshot?.orientation ?? 'white';
-            arrows.attachTo(boardEl, orientation);
+            lastOrientation = currentSnapshot?.orientation ?? 'white';
+            arrows.attachTo(boardEl, lastOrientation);
 
-            const moves = hint.pvLines
+            lastPvMoves = hint.pvLines
+              .slice(0, 3) // show at most 3 arrows; extra PV lines are for CCT scoring only
               .map(line => line.moves[0])
               .filter((m): m is string => m != null)
               .map(uci => uciToMove(uci))
               .filter((m): m is NonNullable<typeof m> => m !== null);
-            arrows.drawMoves(moves, orientation);
+            arrows.drawMoves(lastPvMoves, lastOrientation);
           }
         }
         break;

@@ -4,16 +4,27 @@ import type { UserSettings } from '../shared/storage/schema.js';
 /**
  * Sends an analysis request to the offscreen document.
  * The offscreen document routes it to the Stockfish worker.
+ *
+ * Engine parameters are chosen adaptively from the `timeControl` setting:
+ *   'blitz'  → MultiPV 10, Depth 16  (fast; covers most CCT moves in blitz)
+ *   'rapid'  → MultiPV 13, Depth 20  (deeper; better CCT coverage in longer games)
+ *
+ * High MultiPV is critical for CCT quality: more PV lines mean more forcing moves
+ * receive accurate engine evaluations instead of heuristic estimates.
  */
 export async function requestAnalysis(
   fen: string,
-  settings: Pick<UserSettings, 'maxDepth' | 'multiPv'>
+  settings: Pick<UserSettings, 'maxDepth' | 'multiPv' | 'timeControl'>
 ): Promise<void> {
+  const isBlitz = settings.timeControl === 'blitz';
+  const multiPv = isBlitz ? 10 : 13;
+  const depth   = isBlitz ? 16 : 20;
+
   const msg: SWToOffscreen = {
     type: 'ANALYZE',
     fen,
-    depth: settings.maxDepth,
-    multiPv: settings.multiPv,
+    depth,
+    multiPv,
     movetime: 800,
   };
   await sendToOffscreen(msg);

@@ -31,6 +31,12 @@ export interface UserSettings {
   repertoireMode: 'book' | 'engine';
   /** The color the user is playing — book moves only appear on this side's turns */
   playerSide: 'white' | 'black';
+  /**
+   * Time control for adaptive engine settings.
+   * 'blitz'  → MultiPV 10, Depth 16  (faster, suitable for games under ~5 min)
+   * 'rapid'  → MultiPV 13, Depth 20  (deeper, suitable for games ~10 min+)
+   */
+  timeControl: 'blitz' | 'rapid';
 }
 
 export interface SiteConfig {
@@ -48,6 +54,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   difficulty: 'intermediate',
   repertoireMode: 'book',
   playerSide: 'white',
+  timeControl: 'rapid',
 };
 
 export const DEFAULT_SITE_CONFIG: SiteConfig = {

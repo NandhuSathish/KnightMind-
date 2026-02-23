@@ -6,7 +6,8 @@ interface ArrowStyle {
   opacity: number;
 }
 
-const BEST_MOVE_STYLE: ArrowStyle = { color: '#00d26a', lineWidth: 3.5, opacity: 0.85 };
+const BEST_MOVE_STYLE:  ArrowStyle = { color: '#00d26a', lineWidth: 3.5, opacity: 0.85 };
+const TACTIC_MOVE_STYLE: ArrowStyle = { color: '#ff9800', lineWidth: 4.0, opacity: 0.90 };
 
 /**
  * Renders move arrows as an absolutely-positioned canvas overlay.
@@ -79,6 +80,21 @@ export class ArrowCanvas {
     this._currentMoves = [];
     const { width, height } = this._canvas;
     this._ctx?.clearRect(0, 0, width, height);
+  }
+
+  /** Draw a single orange arrow for a hovered tactic, temporarily replacing PV arrows. */
+  highlightMove(move: Move, orientation: Color): void {
+    this._orientation = orientation;
+    const ctx = this._ctx;
+    if (!ctx) return;
+    const { width, height } = this._canvas;
+    ctx.clearRect(0, 0, width, height);
+    this._drawArrow(ctx, move, width, height, TACTIC_MOVE_STYLE);
+  }
+
+  /** Restore the PV arrows that were last drawn via drawMoves(). */
+  restoreMoves(): void {
+    this._redraw();
   }
 
   // ─── Private ───────────────────────────────────────────────────────────────

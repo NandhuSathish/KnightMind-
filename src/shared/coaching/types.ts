@@ -26,12 +26,23 @@ export interface BoardState {
 export interface RuleResult {
   readonly text: string;
   readonly urgency: number;
+  /** UCI notation of the associated tactic move, e.g. "e4f6". */
+  readonly moveUCI?: string;
+}
+
+/**
+ * A single detected tactic entry, sorted by urgency for panel display.
+ */
+export interface TacticItem {
+  readonly text: string;
+  readonly urgency: number;
+  readonly moveUCI?: string;
 }
 
 // ─── Coaching Output ─────────────────────────────────────────────────────────
 
 export interface CoachingHints {
-  tactical:   string | null;
+  tactics:    TacticItem[];
   strategic:  string | null;
   positional: string | null;
   risk:       string | null;

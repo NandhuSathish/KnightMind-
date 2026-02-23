@@ -15,6 +15,7 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
+    "chess.js": "^1.4.0",
     "stockfish": "^18.0.5"
   }
 }

@@ -1,9 +1,6 @@
 import type { Color } from '../chess/types.js';
-import type { BoardState } from '../coaching/types.js';
-import { STARTING_FEN, fenPositionKey, piecePlacementFromMap } from '../chess/fen.js';
-import { fenToBoardState } from '../coaching/board.js';
-import { applyMove } from './move-applicator.js';
-import { sanToUCI } from './san-converter.js';
+import { STARTING_FEN, fenPositionKey } from '../chess/fen.js';
+import { Chess } from 'chess.js';
 import type { RepertoireEntry, RepertoireIndex } from './types.js';
 
 // ─── Public API ────────────────────────────────────────────────────────────────
@@ -21,16 +18,19 @@ export function parsePGN(
   const games = splitGames(pgn);
 
   for (const { header, moveText } of games) {
-    const startFen   = header.get('FEN') ?? STARTING_FEN;
-    const startState = fenToBoardState(startFen);
-    if (!startState) {
+    const startFen = header.get('FEN') ?? STARTING_FEN;
+    // Validate the starting FEN by attempting to load it
+    let startChess: Chess;
+    try {
+      startChess = new Chess(startFen);
+    } catch {
       errors.push(`Skipping game — invalid FEN in header: ${startFen}`);
       continue;
     }
     try {
       const lineName = extractLineName(header);
       const ecoCode  = header.get('ECO') ?? undefined;
-      traverseMoves(tokenize(moveText), startState, playerColor, index, errors, lineName, ecoCode);
+      traverseMoves(tokenize(moveText), startChess, playerColor, index, errors, lineName, ecoCode);
     } catch (err) {
       errors.push(`Parse error: ${String(err)}`);
     }
@@ -189,7 +189,7 @@ function extractLineName(header: Map<string, string>): string | undefined {
 
 function traverseMoves(
   tokens:      Token[],
-  startState:  BoardState,
+  startChess:  Chess,
   playerColor: Color,
   index:       RepertoireIndex,
   errors:      string[],
@@ -197,14 +197,17 @@ function traverseMoves(
   ecoCode:     string | undefined,
 ): void {
   /**
-   * Stack-based variation traversal.
+   * Stack-based variation traversal using chess.js for position management.
    *
-   * `current` = board state after the last applied move at this depth.
-   * `preMoveState` = board state BEFORE the last applied move.
+   * `current` = Chess instance at the current position.
+   * `preFEN`  = FEN string BEFORE the last applied move.
    *
-   * When var_start is encountered: we revert to preMoveState (the position
-   * before the move that the variation is an alternative to), and push both
-   * states so we can restore them on var_end.
+   * When var_start is encountered: we revert to preFEN (the position before
+   * the move that the variation is an alternative to), creating a new Chess
+   * instance. Both FENs are pushed to the stack for restoration on var_end.
+   *
+   * chess.js handles all move validation, SAN parsing, and position
+   * advancement — replacing the hand-rolled san-converter + move-applicator.
    *
    * Annotation tracking
    * ─────────────────────
@@ -212,13 +215,13 @@ function traverseMoves(
    * player move. PGN comments `{ ... }` that follow a player SAN are attached
    * to that move as `annotation`. The very next opponent SAN is also captured
    * as `opponentResponse` so the UI can show the expected line continuation.
-   * Comments do NOT clear the tracking (a comment can precede the opponent
-   * response). `var_start`, `var_end`, and parse errors DO clear it.
+   * Comments do NOT clear the tracking. `var_start`, `var_end`, and parse
+   * errors DO clear it.
    */
-  let current      = startState;
-  let preMoveState = startState;
+  let current = new Chess(startChess.fen());
+  let preFEN  = startChess.fen();
 
-  const stack: Array<{ pre: BoardState; cur: BoardState }> = [];
+  const stack: Array<{ preFEN: string; curFEN: string }> = [];
 
   // Annotation / line-preview tracking
   let lastPlayerEntry: RepertoireEntry | null = null;
@@ -239,8 +242,8 @@ function traverseMoves(
     }
 
     if (tok.type === 'var_start') {
-      stack.push({ pre: preMoveState, cur: current });
-      current         = preMoveState;
+      stack.push({ preFEN, curFEN: current.fen() });
+      current = new Chess(preFEN); // roll back to before the branching move
       lastPlayerEntry = null;
       lastPlayerUCI   = null;
       continue;
@@ -249,8 +252,8 @@ function traverseMoves(
     if (tok.type === 'var_end') {
       const frame = stack.pop();
       if (frame) {
-        preMoveState = frame.pre;
-        current      = frame.cur;
+        preFEN  = frame.preFEN;
+        current = new Chess(frame.curFEN);
       }
       lastPlayerEntry = null;
       lastPlayerUCI   = null;
@@ -258,43 +261,60 @@ function traverseMoves(
     }
 
     // tok.type === 'san'
-    const result = sanToUCI(current, tok.text);
-    if (!result) {
-      errors.push(`Could not parse SAN "${tok.text}" (${current.sideToMove} to move)`);
+    // Strip +#!? suffixes — chess.js handles + and # natively but not !?
+    const cleanSan = tok.text.replace(/[+#!?]+$/, '');
+
+    // Capture FEN BEFORE the move — needed for the repertoire index key and
+    // for variation rollback (preFEN must hold pre-move position).
+    preFEN = current.fen();
+
+    let chessMove: ReturnType<Chess['move']>;
+    try {
+      chessMove = current.move(cleanSan);
+    } catch {
+      errors.push(`Could not parse SAN "${tok.text}" (${current.turn() === 'w' ? 'white' : 'black'} to move)`);
       lastPlayerEntry = null;
       lastPlayerUCI   = null;
       continue;
     }
 
-    // Clean SAN for display: strip PGN annotation symbols (!?), keep check/mate (+#).
-    const displaySan = tok.text.replace(/[!?]+$/, '');
+    // Build UCI string: from + to + optional promotion (always lowercase)
+    const uci = chessMove.from + chessMove.to + (chessMove.promotion ?? '');
 
-    if (current.sideToMove === playerColor) {
-      // Player's move — record it in the index.
-      const key = boardStateKey(current);
-      let entry  = index.get(key);
+    // chess.js normalises the SAN (adds check/mate symbols); strip any
+    // annotation glyphs that may remain for display purposes.
+    const displaySan = chessMove.san.replace(/[!?]+$/, '');
+
+    // chess.js `turn()` returns the side TO MOVE *after* the move was applied,
+    // so the color that just moved is the opposite of current.turn().
+    const movedColor: Color = current.turn() === 'w' ? 'black' : 'white';
+
+    if (movedColor === playerColor) {
+      // Player's move — record it in the index keyed by pre-move position.
+      const key = fenPositionKey(preFEN);
+      let entry = index.get(key);
       if (!entry) {
         entry = { moves: [] };
         if (lineName !== undefined) entry.lineName = lineName;
         if (ecoCode  !== undefined) entry.ecoCode  = ecoCode;
         index.set(key, entry);
       } else {
-        // Transposition: only set on first occurrence (main line wins).
+        // Transposition: only set metadata on first occurrence (main line wins).
         if (entry.lineName === undefined && lineName !== undefined) entry.lineName = lineName;
         if (entry.ecoCode  === undefined && ecoCode  !== undefined) entry.ecoCode  = ecoCode;
       }
-      if (!entry.moves.some(m => m.uci === result.uci)) {
-        entry.moves.push({ uci: result.uci, san: displaySan });
+      if (!entry.moves.some(m => m.uci === uci)) {
+        entry.moves.push({ uci, san: displaySan });
       }
       // Track so the following comment / opponent SAN can annotate this move.
       lastPlayerEntry = entry;
-      lastPlayerUCI   = result.uci;
+      lastPlayerUCI   = uci;
     } else {
       // Opponent's move — record as `opponentResponse` on the last player move.
       if (lastPlayerEntry && lastPlayerUCI) {
         const mv = lastPlayerEntry.moves.find(m => m.uci === lastPlayerUCI);
         if (mv) {
-          if (!mv.opponentResponse)    mv.opponentResponse    = result.uci;
+          if (!mv.opponentResponse)    mv.opponentResponse    = uci;
           if (!mv.opponentResponseSan) mv.opponentResponseSan = displaySan;
         }
       }
@@ -302,20 +322,5 @@ function traverseMoves(
       lastPlayerEntry = null;
       lastPlayerUCI   = null;
     }
-
-    preMoveState = current;
-    current      = applyMove(current, result.move);
   }
-}
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Convert a BoardState to the first-4-field FEN position key. */
-function boardStateKey(state: BoardState): string {
-  const pieces   = piecePlacementFromMap(state.board);
-  const color    = state.sideToMove === 'white' ? 'w' : 'b';
-  const castling = state.castling || '-';
-  const ep       = state.enPassant ?? '-';
-  // Append dummy clock values; fenPositionKey only reads the first 4 fields
-  return fenPositionKey(`${pieces} ${color} ${castling} ${ep} 0 1`);
 }

@@ -1,5 +1,5 @@
 import type { RawPvLine, RawScore } from '../engine/types.js';
-import type { CoachingHints, DifficultyLevel, RuleResult } from './types.js';
+import type { CoachingHints, DifficultyLevel, RuleResult, TacticItem } from './types.js';
 import { fenToBoardState } from './board.js';
 import { detectMate, detectMaterialCapture, detectCheck, detectFork } from './rules/tactical.js';
 import { detectDevelopment, detectKingSafety } from './rules/strategic.js';
@@ -38,16 +38,26 @@ export class HintGenerator {
     difficulty: DifficultyLevel
   ): CoachingHints {
     const state = fenToBoardState(fen);
-    if (!state) return { tactical: null, strategic: null, positional: null, risk: null, blunder: null };
+    if (!state) return { tactics: [], strategic: null, positional: null, risk: null, blunder: null };
 
     const on = RULES_BY_DIFFICULTY[difficulty];
 
-    const tactical = pickBest([
-      on.has('mate')            ? detectMate(pvLines)                   : null,
-      on.has('materialCapture') ? detectMaterialCapture(pvLines, state) : null,
-      on.has('check')           ? detectCheck(pvLines, state)           : null,
-      on.has('fork')            ? detectFork(pvLines, state)            : null,
-    ]);
+    const allTactics: RuleResult[] = [
+      ...(on.has('mate')            ? detectMate(pvLines)                   : []),
+      ...(on.has('materialCapture') ? detectMaterialCapture(pvLines, state) : []),
+      ...(on.has('check')           ? detectCheck(pvLines, state)           : []),
+      ...(on.has('fork')            ? detectFork(pvLines, state)            : []),
+    ];
+    // Deduplicate by moveUCI — same move may match multiple rules; keep highest urgency
+    const tacticMap = new Map<string, RuleResult>();
+    for (const t of allTactics) {
+      const key = t.moveUCI ?? t.text;
+      const existing = tacticMap.get(key);
+      if (!existing || t.urgency > existing.urgency) tacticMap.set(key, t);
+    }
+    const tactics: TacticItem[] = [...tacticMap.values()]
+      .sort((a, b) => b.urgency - a.urgency)
+      .slice(0, 6);
 
     const strategic = pickBest([
       on.has('kingSafety')  ? detectKingSafety(state)  : null,
@@ -68,7 +78,7 @@ export class HintGenerator {
       on.has('blunderAlert') ? detectBlunder(pvLines, state) : null,
     ]);
 
-    return { tactical, strategic, positional, risk, blunder };
+    return { tactics, strategic, positional, risk, blunder };
   }
 }
 

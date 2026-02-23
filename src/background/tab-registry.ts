@@ -31,6 +31,12 @@ export interface TabState {
    * Used as the baseline for opponent blunder detection.
    */
   prevEval: StoredEval | null;
+  /**
+   * Board orientation detected from the content script (POSITION_CHANGED.orientation).
+   * 'white' = user is seated as white; 'black' = user is seated as black.
+   * Updated on every position change. Null until the first position arrives.
+   */
+  detectedSide: Color | null;
 }
 
 /**
@@ -57,6 +63,7 @@ export class TabRegistry {
       lastInBook: false,
       lastEval:  null,
       prevEval:  null,
+      detectedSide: null,
     };
     this._tabs.set(tabId, state);
     return state;
@@ -83,6 +90,12 @@ export class TabRegistry {
   updateBookStatus(tabId: number, inBook: boolean): void {
     const state = this._tabs.get(tabId);
     if (state) state.lastInBook = inBook;
+  }
+
+  /** Store the board orientation reported by the content script for this tab. */
+  updateDetectedSide(tabId: number, side: Color): void {
+    const state = this._tabs.get(tabId);
+    if (state) state.detectedSide = side;
   }
 
   /**
