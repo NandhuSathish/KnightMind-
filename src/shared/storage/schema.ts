@@ -27,6 +27,10 @@ export interface UserSettings {
   showEvalBar: boolean;
   /** Coaching hint difficulty level */
   difficulty: DifficultyLevel;
+  /** 'book' = use repertoire when available; 'engine' = always use Stockfish */
+  repertoireMode: 'book' | 'engine';
+  /** The color the user is playing — book moves only appear on this side's turns */
+  playerSide: 'white' | 'black';
 }
 
 export interface SiteConfig {
@@ -42,6 +46,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   showArrows: true,
   showEvalBar: false,
   difficulty: 'intermediate',
+  repertoireMode: 'book',
+  playerSide: 'white',
 };
 
 export const DEFAULT_SITE_CONFIG: SiteConfig = {

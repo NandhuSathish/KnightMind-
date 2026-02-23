@@ -1,4 +1,11 @@
-import type { ChessSite } from '../shared/chess/types.js';
+import type { ChessSite, Color } from '../shared/chess/types.js';
+import type { RawScore } from '../shared/engine/types.js';
+
+/** Eval snapshot stored per-tab for blunder detection. */
+export interface StoredEval {
+  score:      RawScore;
+  sideToMove: Color;
+}
 
 export interface TabState {
   tabId: number;
@@ -7,6 +14,23 @@ export interface TabState {
   engineReady: boolean;
   /** Timestamp of last position change — used to expire stale tabs */
   lastActivityAt: number;
+  /**
+   * Whether the last analyzed position for this tab was in the repertoire.
+   * Used to detect re-entry into book after going out of book (transposition).
+   * Reset to false when a new game starts (upsert with a fresh state).
+   */
+  lastInBook: boolean;
+  /**
+   * Engine evaluation from the most recently completed analysis.
+   * Updated after each ANALYSIS_RESULT for this tab.
+   */
+  lastEval: StoredEval | null;
+  /**
+   * Evaluation from the position BEFORE the current one.
+   * Copied from lastEval when a new POSITION_CHANGED arrives.
+   * Used as the baseline for opponent blunder detection.
+   */
+  prevEval: StoredEval | null;
 }
 
 /**
@@ -30,6 +54,9 @@ export class TabRegistry {
       lastFEN: null,
       engineReady: false,
       lastActivityAt: Date.now(),
+      lastInBook: false,
+      lastEval:  null,
+      prevEval:  null,
     };
     this._tabs.set(tabId, state);
     return state;
@@ -50,6 +77,23 @@ export class TabRegistry {
   setEngineReady(tabId: number, ready: boolean): void {
     const state = this._tabs.get(tabId);
     if (state) state.engineReady = ready;
+  }
+
+  /** Update whether the last known position for this tab was in the repertoire. */
+  updateBookStatus(tabId: number, inBook: boolean): void {
+    const state = this._tabs.get(tabId);
+    if (state) state.lastInBook = inBook;
+  }
+
+  /**
+   * Roll the eval forward: saves current lastEval as prevEval, then stores the new eval.
+   * Call this after each analysis result is received for the tab.
+   */
+  advanceEval(tabId: number, score: RawScore, sideToMove: Color): void {
+    const state = this._tabs.get(tabId);
+    if (!state) return;
+    state.prevEval  = state.lastEval;
+    state.lastEval  = { score, sideToMove };
   }
 
   remove(tabId: number): void {

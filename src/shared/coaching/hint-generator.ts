@@ -4,7 +4,7 @@ import { fenToBoardState } from './board.js';
 import { detectMate, detectMaterialCapture, detectCheck, detectFork } from './rules/tactical.js';
 import { detectDevelopment, detectKingSafety } from './rules/strategic.js';
 import { detectPawnStructure, detectPieceActivity } from './rules/positional.js';
-import { detectHanging, detectOpponentThreat } from './rules/risk.js';
+import { detectHanging, detectOpponentThreat, detectBlunder } from './rules/risk.js';
 
 // ─── Difficulty gates ──────────────────────────────────────────────────────────
 
@@ -12,12 +12,13 @@ type RuleName =
   | 'mate' | 'materialCapture' | 'check' | 'fork'
   | 'development' | 'kingSafety'
   | 'pawnStructure' | 'pieceActivity'
-  | 'hanging' | 'opponentThreat';
+  | 'hanging' | 'opponentThreat'
+  | 'blunderAlert';
 
 const RULES_BY_DIFFICULTY: Record<DifficultyLevel, ReadonlySet<RuleName>> = {
-  beginner:     new Set<RuleName>(['mate', 'materialCapture', 'hanging']),
-  intermediate: new Set<RuleName>(['mate', 'materialCapture', 'fork', 'development', 'hanging', 'opponentThreat']),
-  advanced:     new Set<RuleName>(['mate', 'materialCapture', 'check', 'fork', 'development', 'kingSafety', 'pawnStructure', 'pieceActivity', 'hanging', 'opponentThreat']),
+  beginner:     new Set<RuleName>(['mate', 'materialCapture', 'hanging', 'blunderAlert']),
+  intermediate: new Set<RuleName>(['mate', 'materialCapture', 'fork', 'development', 'hanging', 'opponentThreat', 'blunderAlert']),
+  advanced:     new Set<RuleName>(['mate', 'materialCapture', 'check', 'fork', 'development', 'kingSafety', 'pawnStructure', 'pieceActivity', 'hanging', 'opponentThreat', 'blunderAlert']),
 };
 
 function pickBest(results: (RuleResult | null)[]): string | null {
@@ -37,7 +38,7 @@ export class HintGenerator {
     difficulty: DifficultyLevel
   ): CoachingHints {
     const state = fenToBoardState(fen);
-    if (!state) return { tactical: null, strategic: null, positional: null, risk: null };
+    if (!state) return { tactical: null, strategic: null, positional: null, risk: null, blunder: null };
 
     const on = RULES_BY_DIFFICULTY[difficulty];
 
@@ -63,7 +64,11 @@ export class HintGenerator {
       on.has('opponentThreat') ? detectOpponentThreat(pvLines, state) : null,
     ]);
 
-    return { tactical, strategic, positional, risk };
+    const blunder = pickBest([
+      on.has('blunderAlert') ? detectBlunder(pvLines, state) : null,
+    ]);
+
+    return { tactical, strategic, positional, risk, blunder };
   }
 }
 

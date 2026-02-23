@@ -35,6 +35,7 @@ export interface CoachingHints {
   strategic:  string | null;
   positional: string | null;
   risk:       string | null;
+  blunder:    string | null;
 }
 
 // ─── Urgency Constants ────────────────────────────────────────────────────────
@@ -42,6 +43,7 @@ export interface CoachingHints {
 export const URGENCY = {
   CHECKMATE_IN_1:   100,
   CHECKMATE_IN_N:    90,
+  BLUNDER_ALERT:     88,
   HANGING_OWN:       85,
   MATERIAL_CAPTURE:  80,
   FORK:              75,

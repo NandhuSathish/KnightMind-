@@ -1,4 +1,4 @@
-import type { CoachingHint } from '../../shared/messages/protocol.js';
+import type { CoachingHint, MoveQualityResult } from '../../shared/messages/protocol.js';
 import type { UserSettings } from '../../shared/storage/schema.js';
 import type { RawScore } from '../../shared/engine/types.js';
 import type { DifficultyLevel } from '../../shared/storage/schema.js';
@@ -36,6 +36,16 @@ export class CoachPanel {
   private readonly _theme:      HTMLDivElement;
   private readonly _arrowsBtn:  HTMLButtonElement;
   private readonly _diffBtn:    HTMLButtonElement;
+  private readonly _bookBtn:       HTMLButtonElement;
+  private readonly _whiteSideBtn:  HTMLButtonElement;
+  private readonly _blackSideBtn:  HTMLButtonElement;
+  private readonly _sourceBadge:       HTMLDivElement;
+  private readonly _moveQualitySection: HTMLDivElement;
+  private readonly _punisherSection:   HTMLDivElement;
+  private readonly _coachLabel:      HTMLDivElement;
+  private readonly _bookSection:     HTMLDivElement;
+  private readonly _bookNameEl:      HTMLDivElement;
+  private readonly _linesSection:    HTMLDivElement;
   private readonly _depth:      HTMLDivElement;
   private readonly _fab:        HTMLButtonElement;
 
@@ -44,8 +54,14 @@ export class CoachPanel {
   private _hintTimer:   ReturnType<typeof setTimeout> | null = null;
   private _pendingHint: CoachingHint | null = null;
   private _minimized = false;
-  private _showArrows: boolean = true;
-  private _difficulty: DifficultyLevel = 'intermediate';
+  private _showArrows:  boolean = true;
+  private _difficulty:  DifficultyLevel = 'intermediate';
+  private _bookEnabled: boolean = true;
+  private _playerSide: 'white' | 'black' = 'white';
+  private _whiteBookName: string | null = null;
+  private _blackBookName: string | null = null;
+  /** Cached quality of the user's most recent move (persists until next non-null arrives). */
+  private _lastMoveQuality: MoveQualityResult | null = null;
 
   // ─── Drag state ────────────────────────────────────────────────────────────
   /** false until the first drag initializes absolute transform-based positioning */
@@ -154,13 +170,78 @@ export class CoachPanel {
     this._diffBtn.className = 'km-ctrl-btn';
     this._diffBtn.setAttribute('aria-label', 'Cycle coaching difficulty');
 
-    controls.append(this._arrowsBtn, this._diffBtn);
+    this._bookBtn = document.createElement('button');
+    this._bookBtn.className = 'km-ctrl-btn';
+    this._bookBtn.setAttribute('aria-pressed', 'true');
+    this._bookBtn.setAttribute('aria-label', 'Toggle repertoire book moves');
+
+    controls.append(this._arrowsBtn, this._diffBtn, this._bookBtn);
+
+    // Side toggle — "Playing as: [♙ White] [♟ Black]"
+    const sideRow = document.createElement('div');
+    sideRow.className = 'km-side-row';
+
+    const sideLabel = document.createElement('span');
+    sideLabel.className = 'km-side-label';
+    sideLabel.textContent = 'Playing as';
+
+    const sideToggle = document.createElement('div');
+    sideToggle.className = 'km-side-toggle';
+
+    this._whiteSideBtn = document.createElement('button');
+    this._whiteSideBtn.className = 'km-side-btn km-side-white';
+    this._whiteSideBtn.textContent = '♙ White';
+    this._whiteSideBtn.setAttribute('aria-pressed', 'true');
+    this._whiteSideBtn.setAttribute('aria-label', 'Play as White');
+
+    this._blackSideBtn = document.createElement('button');
+    this._blackSideBtn.className = 'km-side-btn km-side-black';
+    this._blackSideBtn.textContent = '♟ Black';
+    this._blackSideBtn.setAttribute('aria-pressed', 'false');
+    this._blackSideBtn.setAttribute('aria-label', 'Play as Black');
+
+    sideToggle.append(this._whiteSideBtn, this._blackSideBtn);
+    sideRow.append(sideLabel, sideToggle);
+
+    // Move quality section — shows grade of user's last move, color coded by quality
+    this._moveQualitySection = document.createElement('div');
+    this._moveQualitySection.className = 'km-move-quality hidden';
+    this._moveQualitySection.setAttribute('aria-live', 'polite');
+    this._moveQualitySection.setAttribute('aria-label', 'Your last move quality');
+
+    // Source badge — always-visible strip showing book vs engine
+    this._sourceBadge = document.createElement('div');
+    this._sourceBadge.className = 'km-source-badge km-source-none';
+
+    // Coaching section label
+    this._coachLabel = document.createElement('div');
+    this._coachLabel.className = 'km-section-label hidden';
+    this._coachLabel.textContent = '💡 Coaching Tips';
+
+    // Repertoire book moves section
+    this._bookSection = document.createElement('div');
+    this._bookSection.className = 'km-repertoire hidden';
+
+    // Book name — shows the active PGN filename for the selected color
+    this._bookNameEl = document.createElement('div');
+    this._bookNameEl.className = 'km-book-name km-book-name--empty';
+    this._bookNameEl.textContent = 'No book for this color';
+
+    // Blunder Punisher section
+    this._punisherSection = document.createElement('div');
+    this._punisherSection.className = 'km-punisher hidden';
+    this._punisherSection.setAttribute('aria-live', 'assertive');
+    this._punisherSection.setAttribute('aria-label', 'Blunder punishment suggestion');
+
+    // Alternative engine lines (PV2, PV3)
+    this._linesSection = document.createElement('div');
+    this._linesSection.className = 'km-lines hidden';
 
     // Depth footer
     this._depth = document.createElement('div');
     this._depth.className = 'km-depth';
 
-    body.append(evalbarWrap, this._evalText, this._categories, this._theme, controls, this._depth);
+    body.append(evalbarWrap, this._evalText, this._moveQualitySection, this._punisherSection, this._sourceBadge, this._bookSection, this._coachLabel, this._categories, this._theme, this._linesSection, sideRow, this._bookNameEl, controls, this._depth);
     this._panel.append(this._header, body);
 
     // ── Re-open FAB (visible only when panel is closed) ───────────────────────
@@ -177,6 +258,9 @@ export class CoachPanel {
     this._minimizeBtn.addEventListener('click', () => this._toggleMinimize());
     this._arrowsBtn.addEventListener('click',  () => this._toggleArrows());
     this._diffBtn.addEventListener('click',    () => this._cycleDifficulty());
+    this._bookBtn.addEventListener('click',      () => this._toggleBook());
+    this._whiteSideBtn.addEventListener('click', () => this._setSide('white'));
+    this._blackSideBtn.addEventListener('click', () => this._setSide('black'));
 
     // Drag: pointerdown on header, move/up on panel (after capture)
     this._header.addEventListener('pointerdown', (e) => this._onPointerDown(e));
@@ -195,6 +279,8 @@ export class CoachPanel {
     // Sync button labels to default state
     this._syncArrowsBtn();
     this._syncDiffBtn();
+    this._syncBookBtn();
+    this._syncSideToggle();
   }
 
   // ─── Public API ────────────────────────────────────────────────────────────
@@ -204,8 +290,12 @@ export class CoachPanel {
     this._hintDelayMs = settings.hintDelayMs;
     this._showArrows  = settings.showArrows;
     this._difficulty  = settings.difficulty;
+    this._bookEnabled = settings.repertoireMode === 'book';
+    this._playerSide  = settings.playerSide;
     this._syncArrowsBtn();
     this._syncDiffBtn();
+    this._syncBookBtn();
+    this._syncSideToggle();
     document.body.appendChild(this._host);
     document.addEventListener('keydown', this._keyHandler);
   }
@@ -283,10 +373,147 @@ export class CoachPanel {
     this._evalText.className = 'km-eval ' +
       (isPositive ? 'positive' : isNegative ? 'negative' : 'neutral');
 
-    // Coaching categories
+    // ── Move quality (user's last move) ──────────────────────────────────────
+    if (hint.myMoveQuality !== null) {
+      this._lastMoveQuality = hint.myMoveQuality;
+    }
+    const mq = this._lastMoveQuality;
+    if (mq) {
+      const GRADE_CLASS: Record<string, string> = {
+        best:       'km-mq--best',
+        excellent:  'km-mq--excellent',
+        good:       'km-mq--good',
+        inaccuracy: 'km-mq--inaccuracy',
+        mistake:    'km-mq--mistake',
+        blunder:    'km-mq--blunder',
+      };
+      const gradeClass = GRADE_CLASS[mq.grade] ?? 'km-mq--good';
+      const lossStr = mq.cpLoss === 0
+        ? '±0.00'
+        : `-${(mq.cpLoss / 100).toFixed(2)}`;
+      this._moveQualitySection.className = `km-move-quality ${gradeClass}`;
+      this._moveQualitySection.innerHTML =
+        `<span class="km-mq-symbol">${esc(mq.symbol)}</span>` +
+        `<span class="km-mq-label">${esc(mq.label)}</span>` +
+        `<span class="km-mq-loss">${esc(lossStr)}</span>`;
+      this._moveQualitySection.classList.remove('hidden');
+    } else {
+      this._moveQualitySection.classList.add('hidden');
+    }
+
+    // ── Blunder Punisher ─────────────────────────────────────────────────────
+    const p = hint.punishment;
+    if (p) {
+      const SEVERITY_CLASS: Record<string, string> = {
+        inaccuracy: 'km-punisher--inaccuracy',
+        mistake:    'km-punisher--mistake',
+        blunder:    'km-punisher--blunder',
+      };
+      const cls = SEVERITY_CLASS[p.blunderSeverity] ?? 'km-punisher--blunder';
+      const confPct = Math.round(p.confidence * 100);
+      const evalStr = p.evaluation >= 0
+        ? `+${(p.evaluation / 100).toFixed(2)}`
+        : `${(p.evaluation / 100).toFixed(2)}`;
+      this._punisherSection.className = `km-punisher ${cls}`;
+      this._punisherSection.innerHTML =
+        `<div class="km-punisher-header">${esc(p.uiMessage)}</div>` +
+        `<div class="km-punisher-body">` +
+          `<div class="km-punisher-move">${esc(p.moveSAN)}</div>` +
+          `<div class="km-punisher-meta">` +
+            `<span class="km-punisher-type">${esc(p.punishmentType)}</span>` +
+            `<span class="km-punisher-eval">${esc(evalStr)}</span>` +
+            `<span class="km-punisher-conf">${confPct}% sure</span>` +
+          `</div>` +
+          `<div class="km-punisher-explain">${esc(p.explanation)}</div>` +
+        `</div>`;
+      this._punisherSection.classList.remove('hidden');
+    } else {
+      this._punisherSection.innerHTML = '';
+      this._punisherSection.classList.add('hidden');
+    }
+
+    // ── Source badge (always visible — tells the user what's driving suggestions) ──
+    const rep = hint.repertoire;
+
+    // Track per-color book names so switching the side toggle shows the right name.
+    if (rep?.bookName) {
+      if (this._playerSide === 'white') this._whiteBookName = rep.bookName;
+      else                              this._blackBookName = rep.bookName;
+      this._syncBookName();
+    }
+
+    if (!this._bookEnabled) {
+      this._sourceBadge.className = 'km-source-badge km-source-engine';
+      this._sourceBadge.textContent = '🤖 Engine mode';
+    } else if (rep?.reenteredBook) {
+      // Was out of book, now transposed back into known preparation
+      this._sourceBadge.className = 'km-source-badge km-source-reentered';
+      this._sourceBadge.textContent = '✔ Back in book line';
+    } else if (rep?.source === 'book') {
+      this._sourceBadge.className = 'km-source-badge km-source-book';
+      this._sourceBadge.textContent = '✔ You are still in your prep';
+    } else if (rep?.opponentDeviated) {
+      // Was in book on user's last turn; opponent deviated
+      this._sourceBadge.className = 'km-source-badge km-source-deviated';
+      this._sourceBadge.textContent = '⚠ Opponent left theory';
+    } else if (rep?.source === 'engine') {
+      this._sourceBadge.className = 'km-source-badge km-source-outofbook';
+      this._sourceBadge.textContent = '🔎 New position — out of repertoire';
+    } else if (rep?.source === 'opponent_turn') {
+      this._sourceBadge.className = 'km-source-badge km-source-waiting';
+      this._sourceBadge.textContent = '⏳ Opponent to move…';
+    } else {
+      // source === 'none' — no book loaded for this color
+      this._sourceBadge.className = 'km-source-badge km-source-none';
+      this._sourceBadge.textContent = '📂 No book loaded — upload a PGN';
+    }
+
+    // ── Book moves (only when actively following repertoire) ──────────────────
+    if (this._bookEnabled && rep?.source === 'book') {
+      // ── Variation identification (ECO · line name · depth) ────────────────
+      const infoParts: string[] = [];
+      if (rep.ecoCode)  infoParts.push(`<span class="km-rep-eco">${esc(rep.ecoCode)}</span>`);
+      if (rep.lineName) infoParts.push(esc(rep.lineName));
+      if (rep.bookDepth > 1) infoParts.push(`Move ${rep.bookDepth}`);
+      const infoHtml = infoParts.length > 0
+        ? `<div class="km-rep-line-info">${infoParts.join(' · ')}</div>`
+        : '';
+
+      // ── Next move suggestion + key ideas from annotations ─────────────────
+      const movesHtml = rep.suggestedMoves.map(m => {
+        // Prefer SAN (human-readable) over UCI fallback
+        const moveLabel = m.san ?? m.uci;
+        const oppLabel  = m.opponentResponseSan ?? m.opponentResponse;
+
+        const oppHtml = oppLabel
+          ? `<div class="km-rep-response"><span class="km-rep-then">then opponent:</span><span class="km-rep-opp">${esc(oppLabel)}</span></div>`
+          : '';
+
+        // PGN annotation → "Key Ideas" section for conceptual guidance
+        const ideaHtml = m.annotation
+          ? `<div class="km-rep-ideas"><span class="km-rep-ideas-label">Key idea</span>${esc(m.annotation)}</div>`
+          : '';
+
+        return `<div class="km-rep-entry">` +
+          `<div class="km-rep-line"><span class="km-rep-you">You play</span><span class="km-rep-move">${esc(moveLabel)}</span></div>` +
+          oppHtml + ideaHtml +
+          `</div>`;
+      }).join('');
+
+      this._bookSection.innerHTML =
+        `<div class="km-rep-header">Book move${rep.suggestedMoves.length > 1 ? 's' : ''}:</div>${infoHtml}${movesHtml}`;
+      this._bookSection.classList.remove('hidden');
+    } else {
+      this._bookSection.innerHTML = '';
+      this._bookSection.classList.add('hidden');
+    }
+
+    // ── Coaching categories ───────────────────────────────────────────────────
     const c = hint.coaching;
-    if (c) {
+    if (c && (c.tactical || c.risk || c.strategic || c.positional || c.blunder)) {
+      this._coachLabel.classList.remove('hidden');
       this._categories.innerHTML = [
+        c.blunder    ? `<div class="km-category km-blunder"><span class="km-cat-label">Blunder</span>${esc(c.blunder)}</div>`        : '',
         c.tactical   ? `<div class="km-category km-tactical"><span class="km-cat-label">Tactic</span>${esc(c.tactical)}</div>`       : '',
         c.risk       ? `<div class="km-category km-risk"><span class="km-cat-label">Risk</span>${esc(c.risk)}</div>`                 : '',
         c.strategic  ? `<div class="km-category km-strategic"><span class="km-cat-label">Strategy</span>${esc(c.strategic)}</div>`   : '',
@@ -295,9 +522,33 @@ export class CoachPanel {
       this._theme.textContent = '';
       this._theme.className = 'km-theme';
     } else {
+      this._coachLabel.classList.add('hidden');
       this._categories.innerHTML = '';
       this._theme.textContent = hint.themeSuggestion ?? '';
       this._theme.className = 'km-theme';
+    }
+
+    // ── Alternative lines (PV2, PV3) ─────────────────────────────────────────
+    const altLines = hint.pvLines.slice(1);   // skip the best (PV1)
+    if (altLines.length > 0) {
+      const linesHtml = altLines.map((line, i) => {
+        const label  = `PV${i + 2}`;
+        const score  = line.score.tag === 'mate'
+          ? (line.score.moves > 0 ? `M${line.score.moves}` : `-M${Math.abs(line.score.moves)}`)
+          : (line.score.value >= 0 ? `+${(line.score.value / 100).toFixed(2)}` : `${(line.score.value / 100).toFixed(2)}`);
+        const moves  = line.moves.slice(0, 3).map(esc).join(' ');
+        return `<div class="km-line-entry">` +
+          `<span class="km-line-label">${label}</span>` +
+          `<span class="km-line-score">${esc(score)}</span>` +
+          `<span class="km-line-moves">${moves}</span>` +
+          `</div>`;
+      }).join('');
+      this._linesSection.innerHTML =
+        `<div class="km-lines-header">Alternative lines</div>${linesHtml}`;
+      this._linesSection.classList.remove('hidden');
+    } else {
+      this._linesSection.innerHTML = '';
+      this._linesSection.classList.add('hidden');
     }
 
     this._depth.textContent = hint.depth > 0 ? `depth ${hint.depth}` : '';
@@ -359,6 +610,48 @@ export class CoachPanel {
     };
     this._diffBtn.textContent = LABELS[this._difficulty];
     this._diffBtn.setAttribute('aria-label', `Difficulty: ${this._difficulty} — click to cycle`);
+  }
+
+  private _toggleBook(): void {
+    this._bookEnabled = !this._bookEnabled;
+    this._syncBookBtn();
+    // Persist the choice so the SW uses the right mode on the next position.
+    setSettings({ repertoireMode: this._bookEnabled ? 'book' : 'engine' }).catch(() => undefined);
+    // Re-render current hint if available
+    if (this._pendingHint) this._render(this._pendingHint);
+  }
+
+  private _syncBookBtn(): void {
+    const on = this._bookEnabled;
+    this._bookBtn.setAttribute('aria-pressed', String(on));
+    this._bookBtn.textContent = on ? '♟ Book' : '♟ Off';
+  }
+
+  private _setSide(side: 'white' | 'black'): void {
+    this._playerSide = side;
+    this._syncSideToggle();
+    this._syncBookName();
+    setSettings({ playerSide: side }).catch(() => undefined);
+    if (this._pendingHint) this._render(this._pendingHint);
+  }
+
+  private _syncSideToggle(): void {
+    const isWhite = this._playerSide === 'white';
+    this._whiteSideBtn.setAttribute('aria-pressed', String(isWhite));
+    this._blackSideBtn.setAttribute('aria-pressed', String(!isWhite));
+  }
+
+  private _syncBookName(): void {
+    const name = this._playerSide === 'white'
+      ? this._whiteBookName
+      : this._blackBookName;
+    if (name) {
+      this._bookNameEl.textContent = `📚 ${name}`;
+      this._bookNameEl.className = 'km-book-name km-book-name--loaded';
+    } else {
+      this._bookNameEl.textContent = 'No book for this color';
+      this._bookNameEl.className = 'km-book-name km-book-name--empty';
+    }
   }
 
   // ─── Drag ──────────────────────────────────────────────────────────────────

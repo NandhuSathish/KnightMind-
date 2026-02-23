@@ -1,6 +1,17 @@
 import type { BoardContext, ChessSite, Color } from '../chess/types.js';
 import type { RawPvLine, RawScore } from '../engine/types.js';
 import type { CoachingHints } from '../coaching/index.js';
+import type { PunishmentResult } from '../coaching/blunder-punisher.js';
+import type { MoveQualityResult } from '../coaching/move-quality.js';
+import type { AnalyzePositionResult, PGNLoadResult, RepertoireMetadata } from '../repertoire/types.js';
+
+export type { AnalyzePositionResult, PGNLoadResult, RepertoireMetadata };
+
+/** Response payload for QUERY_REPERTOIRE. */
+export interface RepertoireStatusResponse {
+  white: RepertoireMetadata | null;
+  black: RepertoireMetadata | null;
+}
 
 // ─── Content Script → Service Worker ─────────────────────────────────────────
 
@@ -15,7 +26,10 @@ export type ContentToSW =
     }
   | { type: 'GAME_STARTED'; site: ChessSite; tabId?: number }
   | { type: 'GAME_ENDED'; tabId?: number }
-  | { type: 'PING' };
+  | { type: 'PING' }
+  | { type: 'LOAD_REPERTOIRE'; pgn: string; playerColor: Color; filename?: string }
+  | { type: 'CLEAR_REPERTOIRE'; color: Color }
+  | { type: 'QUERY_REPERTOIRE' };
 
 // ─── Service Worker → Content Script ─────────────────────────────────────────
 
@@ -61,7 +75,22 @@ export interface CoachingHint {
   depth: number;
   /** Structured coaching hints by category; null if FEN was unavailable */
   coaching: CoachingHints | null;
+  /** Repertoire analysis for this position; null when no repertoire loaded */
+  repertoire: AnalyzePositionResult | null;
+  /**
+   * Human-style punishment recommendation when opponent just blundered.
+   * null when no significant eval swing was detected or on the very first position.
+   */
+  punishment: PunishmentResult | null;
+  /**
+   * Quality grade for the user's most recent move.
+   * Set only when it is now the opponent's turn (user just moved).
+   * null on the user's own turn or before the first move.
+   */
+  myMoveQuality: MoveQualityResult | null;
 }
+
+export type { PunishmentResult, MoveQualityResult };
 
 // ─── Type guards ──────────────────────────────────────────────────────────────
 
@@ -70,7 +99,10 @@ export function isContentToSW(msg: unknown): msg is ContentToSW {
     msg['type'] === 'POSITION_CHANGED' ||
     msg['type'] === 'GAME_STARTED' ||
     msg['type'] === 'GAME_ENDED' ||
-    msg['type'] === 'PING'
+    msg['type'] === 'PING' ||
+    msg['type'] === 'LOAD_REPERTOIRE' ||
+    msg['type'] === 'CLEAR_REPERTOIRE' ||
+    msg['type'] === 'QUERY_REPERTOIRE'
   );
 }
 

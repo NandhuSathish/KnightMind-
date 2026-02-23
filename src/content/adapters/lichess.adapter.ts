@@ -22,12 +22,17 @@ interface LichessAnalysis {
   };
 }
 
-function getLichessAnalysis(doc: Document): LichessAnalysis | null {
+function getLichessWin(doc: Document): Record<string, unknown> | null {
   const win = doc.defaultView;
   if (!win) return null;
   const raw = (win as unknown as Record<string, unknown>)['lichess'];
   if (typeof raw !== 'object' || raw === null) return null;
-  const api = raw as Record<string, unknown>;
+  return raw as Record<string, unknown>;
+}
+
+function getLichessAnalysis(doc: Document): LichessAnalysis | null {
+  const api = getLichessWin(doc);
+  if (!api) return null;
   const analysis = api['analysis'];
   if (typeof analysis !== 'object' || analysis === null) return null;
   return analysis as LichessAnalysis;
@@ -238,9 +243,43 @@ export class LichessAdapter implements IBoardAdapter {
   }
 
   private _inferActiveColor(doc: Document): Color {
-    // Cover all page types: analysis/study (.tview2), old move list (.moves),
-    // live game move list (.rmoves, l4x)
-    const moves = doc.querySelectorAll('.tview2 move, .moves move, .rmoves move, l4x move');
+    // Primary: look for a piece on a chessground last-move square.
+    // After every move, cg-board has <square class="last-move"> on both the
+    // from-square and the to-square of the move that was just played.
+    // The piece currently sitting on the to-square is the piece that just moved.
+    // Whoever moved last → the OTHER color is to move next.
+    // This uses chessground's own rendering so it's correct for all move types
+    // (normal, capture, castle, en passant, promotion) with no clock/move-list parsing.
+    const board = doc.querySelector('cg-board');
+    if (board) {
+      const squareSize = (board as HTMLElement).getBoundingClientRect().width / 8;
+      if (squareSize > 0) {
+        const lastSquares = board.querySelectorAll<HTMLElement>('square.last-move');
+        const pieces      = board.querySelectorAll<HTMLElement>('piece');
+
+        for (const sq of lastSquares) {
+          const sqM = /translate\(([0-9.]+)px,\s*([0-9.]+)px\)/.exec(sq.style.transform);
+          if (!sqM) continue;
+          const sqFile = Math.round(parseFloat(sqM[1] ?? '0') / squareSize);
+          const sqRank = Math.round(parseFloat(sqM[2] ?? '0') / squareSize);
+
+          for (const piece of pieces) {
+            const pm = /translate\(([0-9.]+)px,\s*([0-9.]+)px\)/.exec(piece.style.transform);
+            if (!pm) continue;
+            if (Math.round(parseFloat(pm[1] ?? '0') / squareSize) === sqFile &&
+                Math.round(parseFloat(pm[2] ?? '0') / squareSize) === sqRank) {
+              // This piece was the one that just moved — its opponent is next.
+              const movedColor: Color = piece.classList.contains('white') ? 'white' : 'black';
+              return movedColor === 'white' ? 'black' : 'white';
+            }
+          }
+        }
+      }
+    }
+
+    // Fallback for start-of-game (no last-move squares yet): move-list parity.
+    // <move> is Lichess's custom element used inside rm6/l4x/tview2 containers.
+    const moves = doc.querySelectorAll('move');
     return moves.length % 2 === 0 ? 'white' : 'black';
   }
 
